@@ -47,6 +47,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/cc-launcher-bin/codex" "$RUNNER_TEMP/cc-launcher-bin/claude"
           echo "$RUNNER_TEMP/cc-launcher-bin" >> "$GITHUB_PATH"
 
+      - name: Install dependencies
+        run: npm install
+
       - name: Resolve version
         id: version
         run: |
