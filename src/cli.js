@@ -83,6 +83,7 @@ export function parseCliArgs(argv) {
   let proxyPort;
   let dryRun = false;
   let poolList = false;
+  let proxyStartOnly = false;
   let outputJson = false;
   let passthroughMode = false;
   const codexArgs = [];
@@ -209,6 +210,10 @@ export function parseCliArgs(argv) {
       case "--pool-list":
         poolList = true;
         break;
+      case "--pool-proxy-start-only":
+      case "--proxy-start-only":
+        proxyStartOnly = true;
+        break;
       case "--help":
       case "-h":
       case "--pool-help":
@@ -235,6 +240,7 @@ export function parseCliArgs(argv) {
     proxyPort,
     dryRun,
     outputJson,
+    proxyStartOnly,
     codexArgs,
   };
 }
@@ -576,12 +582,70 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       metadata,
       shouldWrite: true,
     });
-    return runProxyCommand({
+
+    // If --pool-proxy-start-only is set, just start proxy and exit
+    if (parsed.proxyStartOnly) {
+      return runProxyCommand({
+        parsed,
+        config,
+        configDir,
+        cliContext,
+      });
+    }
+
+    // Otherwise: start proxy in background, then launch CLI with proxy env
+    const proxy = {
+      ...resolveProxyConfig(config, cliContext.appType),
+      ...(parsed.proxyHost ? { host: parsed.proxyHost } : {}),
+      ...(parsed.proxyPort ? { port: parsed.proxyPort } : {}),
+    };
+
+    // Start proxy in background (don't await)
+    runProxyCommand({
       parsed,
       config,
       configDir,
       cliContext,
+    }).catch(() => {});
+
+    // Wait for proxy to start
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Now launch CLI with proxy environment
+    const launchCommand = parsed.codexCommand || config.codexCommand || cliContext.command;
+    const selection = await selectLaunchProfile({
+      configDir,
+      config,
+      cliContext,
+      profileName: parsed.profileName,
+      launchCommand,
+      allowLiveProbe: false,
     });
+    const profile = selection.profile;
+
+    printProfile(profile, null, cliContext);
+
+    const runtime = await prepareCodexHome({
+      configDir,
+      config,
+      profile,
+      appType: cliContext.appType,
+      writeFiles: true,
+    });
+
+    // Set proxy environment variables
+    if (cliContext.appType === "claude") {
+      runtime.env.HTTP_PROXY = `http://${proxy.host}:${proxy.port}`;
+      runtime.env.HTTPS_PROXY = `http://${proxy.host}:${proxy.port}`;
+    } else {
+      // For Codex, use --remote flag
+      const remoteUrl = `ws://${proxy.host}:${proxy.port}`;
+      return spawnLauncher(launchCommand, ["--remote", remoteUrl, ...parsed.codexArgs], runtime.env);
+    }
+
+    // Launch Claude CLI
+    const launchArgs = buildLaunchArgs(cliContext, runtime, parsed.codexArgs);
+    return spawnLauncher(launchCommand, launchArgs, runtime.env);
   }
 
   if (parsed.command === "usage") {
