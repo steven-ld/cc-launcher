@@ -1,36 +1,40 @@
 # CC Launcher
 
-`CC Launcher` 是一个基于 `cc-switch` 的 CLI 启动器，用于统一管理并启动 `Codex` 与 `Claude` 的多账号环境。
+`CC Launcher` is a production-oriented CLI launcher for `Codex` and `Claude`, backed by `cc-switch`.
 
-安装后会直接提供两个稳定入口：
+It provides two stable entrypoints after installation:
 
 - `ccodex`
 - `cclaude`
 
-项目目标很明确：
+The project is designed around four defaults:
 
-- 以 `cc-switch` 作为默认数据源
-- 默认零配置可用
-- 避免与系统已有 `codex` / `claude` 命令重名
-- 将产品级配置固定收口，而不是散落在各个项目目录
+- `cc-switch` is the primary profile source
+- zero-config startup should work for most users
+- local project test configs must not leak into normal runtime
+- installation should come from a packaged release, not from cloning source
 
 ## Features
 
-- 默认自动发现 `~/.cc-switch/cc-switch.db`
-- 默认直接从 `cc-switch` 导入可用 provider
-- 默认随机选路，启动开销最小
-- 可选启用 Codex 官方 5 小时窗口剩余额度优先策略
-- `cclaude` 运行时隔离用户级 settings，避免被全局 provider 配置覆盖
-- 提供 `init` 与 `doctor`，用于安装后引导和环境诊断
-- 默认不再扫描当前工作目录中的 `pool.local.json`
+- Auto-discovers `~/.cc-switch/cc-switch.db`
+- Auto-imports Codex and Claude providers from `cc-switch`
+- Uses random profile selection by default for fast startup
+- Supports optional Codex quota-aware routing via `max-remaining-5h`
+- Isolates `cclaude` runtime settings from `~/.claude/settings.json`
+- Provides `init` and `doctor` for onboarding and diagnostics
+- Uses a fixed global config path instead of scanning the current project directory
 
 ## Installation
 
+Install the latest packaged release directly from GitHub:
+
 ```bash
-npm install -g cc-launcher
+npm install -g https://github.com/steven-ld/cc-launcher/releases/latest/download/cc-launcher.tgz
 ```
 
-安装完成后，直接使用：
+This installs the latest release artifact directly. Users do not need to clone the repository or install from source.
+
+After installation, the primary commands are:
 
 ```bash
 ccodex doctor
@@ -39,7 +43,7 @@ ccodex list
 ccodex run -- --help
 ```
 
-如果要启动 Claude：
+For Claude:
 
 ```bash
 cclaude doctor
@@ -49,35 +53,36 @@ cclaude run
 
 ## Quick Start
 
-### 1. 准备 `cc-switch`
+### 1. Prepare `cc-switch`
 
-`CC Launcher` 默认依赖本地数据库：
+`CC Launcher` expects the local profile database at:
 
 ```text
 ~/.cc-switch/cc-switch.db
 ```
 
-首次使用前请确认：
+Before first use, make sure:
 
-1. 已安装 `cc-switch`
-2. 已完成登录，并成功生成本地数据库
+1. `cc-switch` is installed
+2. you have signed in through `cc-switch`
+3. the local database has been created successfully
 
-如果数据库不存在，`doctor` 和 `init` 会直接给出安装提示。
+If the database is missing, `doctor` and `init` will print clear installation guidance.
 
-### 2. 运行诊断
+### 2. Verify the environment
 
 ```bash
 ccodex doctor
 ```
 
-理想情况下你会看到：
+A healthy environment should report:
 
-- 命令已安装
-- 默认数据库可访问
-- 可导入 profile 数量正常
-- 当前环境已具备运行条件
+- the command is installed
+- the default database is available
+- importable profiles are present
+- the launcher is ready to run
 
-### 3. 直接启动
+### 3. Start using it
 
 ```bash
 ccodex list
@@ -86,11 +91,9 @@ ccodex run -- --help
 ccodex usage --json
 ```
 
-对大多数场景来说，到这里已经够用了。
-
 ## Commands
 
-`CC Launcher` 当前提供以下核心命令：
+`CC Launcher` currently exposes the following commands:
 
 - `init`
 - `doctor`
@@ -99,34 +102,34 @@ ccodex usage --json
 - `run`
 - `usage`
 
-说明如下：
+Command semantics:
 
-- `init`：首次安装后的引导式确认
-- `doctor`：检查命令、配置、数据库与 provider 可用性
-- `list`：列出当前可用 profile
-- `pick`：显示本次将要使用的 profile
-- `run`：以选中的 profile 启动目标 CLI
-- `usage`：读取 Codex 官方额度信息，仅 `ccodex` 支持
+- `init`: first-run guidance and readiness verification
+- `doctor`: checks command availability, config, database, and provider import status
+- `list`: prints available profiles
+- `pick`: shows which profile would be selected
+- `run`: launches the target CLI with the selected profile
+- `usage`: reads official Codex rate-limit data; available only on `ccodex`
 
 ## Configuration
 
-默认情况下不需要手工配置文件。
+In the default path, no manual config file is required.
 
-如果你需要覆盖默认行为，例如：
-
-- 指定运行时目录
-- 指定共享 home
-- 修改选路策略
-- 覆盖默认 `cc-switch` 数据库路径
-- 在不依赖 `cc-switch` 的情况下手工维护 profile
-
-请使用固定的全局产品配置文件：
+If you want to override runtime behavior, use the fixed global config file:
 
 ```text
 ~/.cc-launcher/config.json
 ```
 
-默认不会再自动扫描当前项目目录中的 `pool.local.json` 或 `config/pool.json`。
+Typical reasons to add this file:
+
+- override `runtimeRoot`
+- override the shared home directory
+- change selection strategy
+- override the default `cc-switch` database path
+- use static profiles instead of `cc-switch`
+
+By default, `CC Launcher` no longer auto-scans local files such as `pool.local.json` in the current repository.
 
 ### Minimal Config
 
@@ -147,7 +150,7 @@ ccodex usage --json
 }
 ```
 
-如果数据库不在默认位置：
+If your database lives elsewhere:
 
 ```json
 {
@@ -159,11 +162,11 @@ ccodex usage --json
 }
 ```
 
-### Optional Strategy
+### Optional Quota-Aware Routing
 
-默认策略是 `random`。
+The default strategy is `random`.
 
-如果你愿意牺牲启动速度，`ccodex` 可以切换到基于官方额度的选路策略：
+If you are willing to trade startup latency for smarter official Codex routing, set:
 
 ```json
 {
@@ -173,11 +176,11 @@ ccodex usage --json
 }
 ```
 
-该模式只探测官方 Codex auth 型 profile，并按 5 小时窗口剩余额度选择。`cclaude` 与非官方 env-only provider 不参与这一排序。
+This mode probes official Codex auth-based profiles and selects the one with the highest remaining quota in the 5-hour window. It does not apply to `cclaude` or non-official env-only providers.
 
 ### Static Profiles
 
-如果你完全不想依赖 `cc-switch`，也可以继续使用静态 profile；建议显式通过 `--pool-config` 指向配置文件，而不是依赖自动发现：
+If you do not want to use `cc-switch`, you can still provide static profiles explicitly via `--pool-config`:
 
 ```json
 {
@@ -196,52 +199,63 @@ ccodex usage --json
 }
 ```
 
-## Runtime Behavior
+## Release
 
-### `ccodex`
+Release packaging is automated through GitHub Actions.
 
-- 默认从 `cc-switch` 导入 Codex provider
-- 默认随机选择 profile
-- 可选读取官方额度并按剩余额度优先
-- `usage` 可读取官方 live 或 cached snapshot
+Maintainers can cut a new version locally with one of the following commands:
 
-### `cclaude`
+```bash
+npm run release:patch
+npm run release:minor
+npm run release:major
+```
 
-- 默认从 `cc-switch` 导入 Claude provider
-- 运行时会注入隔离后的 settings 文件
-- 默认不会继续继承 `~/.claude/settings.json` 中的全局 provider 绑定
+Each command will:
+
+1. run the full test suite
+2. bump `package.json` version with a Git tag such as `v0.2.1`
+3. push `master` and the new tag to GitHub
+4. trigger the Release workflow
+5. publish both `cc-launcher-<version>.tgz` and the stable `cc-launcher.tgz` asset to GitHub Releases
+
+The stable asset makes this install command permanent:
+
+```bash
+npm install -g https://github.com/steven-ld/cc-launcher/releases/latest/download/cc-launcher.tgz
+```
 
 ## Troubleshooting
 
-### 没找到 `~/.cc-switch/cc-switch.db`
+### `~/.cc-switch/cc-switch.db` was not found
 
-优先检查：
+Check the following first:
 
-1. `cc-switch` 是否已安装
-2. 是否已经在 `cc-switch` 中完成登录
-3. 数据库是否位于默认路径
+1. `cc-switch` is installed
+2. sign-in has completed successfully
+3. the database is present at the default path
 
-如果数据库在自定义位置，可显式传入：
+If the database is in a custom location, pass it explicitly:
 
 ```bash
 ccodex doctor --pool-source-db /absolute/path/to/cc-switch.db
 ```
 
-### 在仓库目录启动时误读本地测试配置
+### A local repository config was used unexpectedly
 
-当前版本默认不会自动扫描工作目录中的 `pool.local.json`。如果你仍然希望使用某份本地配置，应该显式传入：
+Current versions no longer auto-scan the working directory for `pool.local.json`. If you want to use a local config intentionally, pass it explicitly:
 
 ```bash
 ccodex run --pool-config /absolute/path/to/config.json -- --help
 ```
 
-### `cclaude` 总是落到错误 provider
+### `cclaude` still uses the wrong provider
 
-`cclaude` 已默认隔离用户级 settings。如果结果仍然不对，优先检查对应 provider 本身是否就在 `cc-switch` 数据里写入了目标模型或网关环境变量。
+`cclaude` now isolates user-level settings by default. If the selected model or gateway is still wrong, inspect the provider data stored in `cc-switch` itself.
 
 ## Development
 
-仓库内调试可使用：
+For local development:
 
 ```bash
 npm test
@@ -250,7 +264,7 @@ npm run codex -- list
 npm run codex -- run -- --help
 ```
 
-面向最终用户时，推荐始终使用 npm 暴露的 bin：
+For end users, the supported entrypoints remain:
 
 ```bash
 ccodex ...

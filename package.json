@@ -13,19 +13,34 @@
     "src",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/steven-ld/cc-launcher.git"
+  },
+  "homepage": "https://github.com/steven-ld/cc-launcher#readme",
+  "bugs": {
+    "url": "https://github.com/steven-ld/cc-launcher/issues"
+  },
   "engines": {
     "node": ">=22.0.0"
   },
   "scripts": {
     "codex": "node ./src/cli.js",
     "postinstall": "node ./scripts/postinstall.js",
-    "test": "node --test"
+    "test": "node --test",
+    "pack:release": "node ./scripts/pack-release.js",
+    "release": "npm run release:patch",
+    "release:patch": "npm test && npm version patch -m \"chore(release): v%s\" && git push origin master --follow-tags",
+    "release:minor": "npm test && npm version minor -m \"chore(release): v%s\" && git push origin master --follow-tags",
+    "release:major": "npm test && npm version major -m \"chore(release): v%s\" && git push origin master --follow-tags"
   },
   "keywords": [
+    "cc-launcher",
     "codex",
     "claude",
     "cc-switch",
-    "proxy"
+    "launcher",
+    "github-release"
   ],
   "license": "MIT"
 }
