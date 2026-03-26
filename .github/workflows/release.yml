@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  NODE_OPTIONS: --disable-warning=ExperimentalWarning
+
 permissions:
   contents: write
 
@@ -27,6 +30,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Install test command shims
+        run: |
+          mkdir -p "$RUNNER_TEMP/cc-launcher-bin"
+          cat > "$RUNNER_TEMP/cc-launcher-bin/codex" <<'SHIM'
+          #!/usr/bin/env bash
+          exit 0
+          SHIM
+          cat > "$RUNNER_TEMP/cc-launcher-bin/claude" <<'SHIM'
+          #!/usr/bin/env bash
+          exit 0
+          SHIM
+          chmod +x "$RUNNER_TEMP/cc-launcher-bin/codex" "$RUNNER_TEMP/cc-launcher-bin/claude"
+          echo "$RUNNER_TEMP/cc-launcher-bin" >> "$GITHUB_PATH"
 
       - name: Resolve version
         id: version
