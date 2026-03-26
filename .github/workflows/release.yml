@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -49,13 +51,26 @@ jobs:
         id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          
+          # Determine if this is a tag push or branch push
+          IS_TAG=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="v${VERSION}"
+            IS_TAG=true
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            IS_TAG=true
           else
-            TAG="${GITHUB_REF_NAME}"
+            # Branch push - use version with suffix
+            TAG="v${VERSION}"
+            COMMIT_SHORT="${GITHUB_SHA:0:7}"
+            TAG="${TAG}-dev.${COMMIT_SHORT}"
+            echo "Branch push detected, using dev tag: ${TAG}"
           fi
+          
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
           echo "versioned_tgz=dist/cc-launcher-${VERSION}.tgz" >> "$GITHUB_OUTPUT"
           echo "stable_tgz=dist/cc-launcher.tgz" >> "$GITHUB_OUTPUT"
 
@@ -68,43 +83,89 @@ jobs:
       - name: Generate release notes
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
-
-          {
-            echo "## CC Launcher ${TAG}"
-            echo
-            echo "CLI launcher for Codex and Claude, backed by cc-switch."
-            echo
-            echo "### Install the latest package"
-            echo
-            echo '```bash'
-            echo "npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz"
-            echo '```'
-            echo
-            if [ -n "$PREV_TAG" ]; then
-              echo "### Changes since ${PREV_TAG}"
+          IS_TAG="${{ steps.version.outputs.is_tag }}"
+          
+          if [ "$IS_TAG" = "true" ]; then
+            # Tag push - use git log for changes
+            PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+            
+            {
+              echo "## CC Launcher ${TAG}"
               echo
-              git log "${PREV_TAG}..HEAD" --pretty=format:'- %s (%h)' --no-merges | head -50
-            else
-              echo "### Initial release"
-            fi
-          } > release-notes.md
+              echo "CLI launcher for Codex and Claude, backed by cc-switch."
+              echo
+              echo "### Install the latest package"
+              echo
+              echo '```bash'
+              echo "npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz"
+              echo '```'
+              echo
+              if [ -n "$PREV_TAG" ]; then
+                echo "### Changes since ${PREV_TAG}"
+                echo
+                git log "${PREV_TAG}..HEAD" --pretty=format:'- %s (%h)' --no-merges | head -50
+              else
+                echo "### Initial release"
+              fi
+            } > release-notes.md
+          else
+            # Branch push - auto dev release
+            {
+              echo "## CC Launcher ${TAG} (Dev Preview)"
+              echo
+              echo "⚠️ **This is an auto-generated dev build from master branch.**"
+              echo
+              echo "For production, use the latest stable release."
+              echo
+              echo "### Install this dev package"
+              echo
+              echo '```bash'
+              echo "npm install -g https://github.com/${{ github.repository }}/releases/download/${TAG}/cc-launcher.tgz"
+              echo '```'
+              echo
+              echo "### Latest commits"
+              echo
+              git log --pretty=format:'- %s (%h)' --no-merges | head -20
+            } > release-notes.md
+          fi
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          gh release create "$TAG" \
-            "${{ steps.version.outputs.versioned_tgz }}" \
-            "${{ steps.version.outputs.stable_tgz }}" \
-            --repo "${{ github.repository }}" \
-            --title "${TAG} — CC Launcher" \
-            --notes-file release-notes.md \
-            --latest
+          IS_TAG="${{ steps.version.outputs.is_tag }}"
+          
+          # Set as latest only for tag pushes
+          if [ "$IS_TAG" = "true" ]; then
+            gh release create "$TAG" \
+              "${{ steps.version.outputs.versioned_tgz }}" \
+              "${{ steps.version.outputs.stable_tgz }}" \
+              --repo "${{ github.repository }}" \
+              --title "${TAG} — CC Launcher" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            # Dev release - don't mark as latest
+            gh release create "$TAG" \
+              "${{ steps.version.outputs.versioned_tgz }}" \
+              "${{ steps.version.outputs.stable_tgz }}" \
+              --repo "${{ github.repository }}" \
+              --title "${TAG} (Dev Preview)" \
+              --notes-file release-notes.md \
+              --draft
+          fi
 
       - name: Summary
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          echo "### Release ${TAG} created" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Latest install: npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz" >> "$GITHUB_STEP_SUMMARY"
+          IS_TAG="${{ steps.version.outputs.is_tag }}"
+          
+          echo "### Release ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$IS_TAG" = "true" ]; then
+            echo "- Status: **Stable Release**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Latest install: npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Status: **Dev Preview (Draft)**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- This release is not marked as 'Latest'" >> "$GITHUB_STEP_SUMMARY"
+          fi
