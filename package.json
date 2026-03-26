@@ -1,0 +1,31 @@
+{
+  "name": "cc-launcher",
+  "version": "0.2.0",
+  "description": "Production-ready cc-switch backed launcher for Codex and Claude CLI workflows",
+  "type": "module",
+  "bin": {
+    "ccodex": "./bin/ccodex.js",
+    "cclaude": "./bin/cclaude.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "codex": "node ./src/cli.js",
+    "postinstall": "node ./scripts/postinstall.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "codex",
+    "claude",
+    "cc-switch",
+    "proxy"
+  ],
+  "license": "MIT"
+}

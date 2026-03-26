@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.vscode/
+.runtime/
+.codex-pool/
+
+config/*.local.json
+config/*.secret.json
+config/*.secrets.json
+config/auth.*.json
+!config/auth.example.json
