@@ -88,12 +88,12 @@ export function parseCliArgs(argv) {
   let passthroughMode = false;
   const codexArgs = [];
 
-  // Default to proxy mode with auto-load-balancing if no command specified
+  // Default to run mode with auto-load-balancing if no command specified
   if (args[0] && ["init", "doctor", "list", "pick", "proxy", "run", "usage", "cache", "status", "enable", "disable"].includes(args[0])) {
     command = args.shift();
   } else if (!args[0] || !args[0].startsWith("--")) {
-    // No command or first arg is not a flag -> default to proxy with load balancing
-    command = "proxy";
+    // No command or first arg is not a flag -> default to run with profile selection
+    command = "run";
   }
 
   while (args.length > 0) {
@@ -269,9 +269,11 @@ function listProfiles(config) {
 
 function spawnLauncher(command, args, env) {
   return new Promise((resolve, reject) => {
+    const isWindows = process.platform === "win32";
     const child = spawn(command, args, {
       stdio: "inherit",
       env,
+      shell: isWindows,  // Windows needs shell for .cmd files
     });
 
     const forwardSignal = (signal) => {
@@ -582,70 +584,12 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       metadata,
       shouldWrite: true,
     });
-
-    // If --pool-proxy-start-only is set, just start proxy and exit
-    if (parsed.proxyStartOnly) {
-      return runProxyCommand({
-        parsed,
-        config,
-        configDir,
-        cliContext,
-      });
-    }
-
-    // Otherwise: start proxy in background, then launch CLI with proxy env
-    const proxy = {
-      ...resolveProxyConfig(config, cliContext.appType),
-      ...(parsed.proxyHost ? { host: parsed.proxyHost } : {}),
-      ...(parsed.proxyPort ? { port: parsed.proxyPort } : {}),
-    };
-
-    // Start proxy in background (don't await)
-    runProxyCommand({
+    return runProxyCommand({
       parsed,
       config,
       configDir,
       cliContext,
-    }).catch(() => {});
-
-    // Wait for proxy to start
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Now launch CLI with proxy environment
-    const launchCommand = parsed.codexCommand || config.codexCommand || cliContext.command;
-    const selection = await selectLaunchProfile({
-      configDir,
-      config,
-      cliContext,
-      profileName: parsed.profileName,
-      launchCommand,
-      allowLiveProbe: false,
     });
-    const profile = selection.profile;
-
-    printProfile(profile, null, cliContext);
-
-    const runtime = await prepareCodexHome({
-      configDir,
-      config,
-      profile,
-      appType: cliContext.appType,
-      writeFiles: true,
-    });
-
-    // Set proxy environment variables
-    if (cliContext.appType === "claude") {
-      runtime.env.HTTP_PROXY = `http://${proxy.host}:${proxy.port}`;
-      runtime.env.HTTPS_PROXY = `http://${proxy.host}:${proxy.port}`;
-    } else {
-      // For Codex, use --remote flag
-      const remoteUrl = `ws://${proxy.host}:${proxy.port}`;
-      return spawnLauncher(launchCommand, ["--remote", remoteUrl, ...parsed.codexArgs], runtime.env);
-    }
-
-    // Launch Claude CLI
-    const launchArgs = buildLaunchArgs(cliContext, runtime, parsed.codexArgs);
-    return spawnLauncher(launchCommand, launchArgs, runtime.env);
   }
 
   if (parsed.command === "usage") {
