@@ -280,7 +280,17 @@ function buildLaunchArgs(cliContext, runtime, passthroughArgs) {
   return [...injectedArgs, ...launchArgs];
 }
 
-function resolveUsageProfile(config, profileName) {
+function isOfficialUsageCandidate(profile) {
+  return Boolean(profile?.auth || profile?.authFile);
+}
+
+async function resolveUsageProfile({
+  config,
+  configDir,
+  cliContext,
+  profileName,
+  launchCommand,
+}) {
   if (profileName) {
     return pickProfile(config, { profileName });
   }
@@ -289,7 +299,27 @@ function resolveUsageProfile(config, profileName) {
     return config.profiles[0];
   }
 
-  throw new Error("usage requires --pool-profile when multiple profiles are configured.");
+  const officialProfiles = config.profiles.filter(isOfficialUsageCandidate);
+  if (officialProfiles.length === 0) {
+    throw new Error("usage requires an official Codex auth profile. No official profiles were found.");
+  }
+
+  if (officialProfiles.length === 1) {
+    return officialProfiles[0];
+  }
+
+  const strategyAwareSelection = await selectLaunchProfile({
+    configDir,
+    config: {
+      ...config,
+      profiles: officialProfiles,
+    },
+    cliContext,
+    launchCommand,
+    allowLiveProbe: true,
+  });
+
+  return strategyAwareSelection.profile;
 }
 
 async function syncManagedProfilesIfNeeded({ configDir, config, metadata, shouldWrite }) {
@@ -380,7 +410,14 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       throw new Error(`${cliContext.cliName} does not support usage. Use ccodex usage instead.`);
     }
 
-    const profile = resolveUsageProfile(config, parsed.profileName);
+    const launchCommand = parsed.codexCommand || config.codexCommand || cliContext.command;
+    const profile = await resolveUsageProfile({
+      config,
+      configDir,
+      cliContext,
+      profileName: parsed.profileName,
+      launchCommand,
+    });
     await syncManagedProfilesIfNeeded({
       configDir,
       config,
@@ -395,7 +432,6 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       writeFiles: true,
     });
 
-    const launchCommand = parsed.codexCommand || config.codexCommand || cliContext.command;
     let source = "official-live";
     let snapshot;
     let cachedMetadata = null;

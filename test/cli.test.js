@@ -544,6 +544,64 @@ for await (const line of rl) {
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
 
+test("usage command auto-selects an official profile when multiple profiles are configured", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codex-proxy-"));
+  const configDir = path.join(tempRoot, "config");
+  const fakeCodexPath = path.join(tempRoot, "fake-codex");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(path.join(configDir, "team-a.auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-a" } }), "utf8");
+  await fs.writeFile(path.join(configDir, "team-b.auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-b" } }), "utf8");
+  await fs.writeFile(
+    path.join(configDir, "pool.local.json"),
+    JSON.stringify(
+      {
+        version: 1,
+        runtimeRoot: "../.codex-pool",
+        profiles: [
+          {
+            name: "team-a",
+            authFile: "./team-a.auth.json",
+          },
+          {
+            name: "team-b",
+            authFile: "./team-b.auth.json",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await fs.writeFile(fakeCodexPath, "#!/usr/bin/env node\nimport fs from \"node:fs\";\nimport path from \"node:path\";\nimport readline from \"node:readline\";\n\nfunction readAccountId() {\n  const authPath = path.join(process.env.CODEX_HOME, \"auth.json\");\n  const auth = JSON.parse(fs.readFileSync(authPath, \"utf8\"));\n  return auth.tokens?.account_id ?? null;\n}\n\nconst rl = readline.createInterface({ input: process.stdin });\nfor await (const line of rl) {\n  const msg = JSON.parse(line);\n  if (msg.method === \"initialize\") {\n    process.stdout.write(JSON.stringify({ id: msg.id, result: { userAgent: \"fake/0.1\" } }) + \"\\n\");\n  } else if (msg.method === \"account/rateLimits/read\") {\n    process.stdout.write(JSON.stringify({\n      id: msg.id,\n      result: {\n        rateLimits: {\n          limit_id: \"codex\",\n          primary: { used_percent: readAccountId() === \"account-a\" ? 31 : 47, window_minutes: 300, resets_at: 1774375500 },\n          secondary: { used_percent: 84, window_minutes: 10080, resets_at: 1774528615 },\n          credits: null,\n          plan_type: \"team\"\n        }\n      }\n    }) + \"\\n\");\n    process.exit(0);\n  }\n}", "utf8");
+  await fs.chmod(fakeCodexPath, 0o755);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "src/cli.js",
+      "usage",
+      "--pool-config",
+      path.join(configDir, "pool.local.json"),
+      "--pool-bin",
+      fakeCodexPath,
+      "--pool-json",
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(result.status, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.match(payload.profile, /^team-[ab]$/);
+  assert.equal(payload.source, "official-live");
+  assert.equal(payload.snapshot.primary.window_minutes, 300);
+
+  await fs.rm(tempRoot, { recursive: true, force: true });
+});
+
 test("usage command falls back to cached official snapshot when live read fails", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codex-proxy-"));
   const configDir = path.join(tempRoot, "config");
