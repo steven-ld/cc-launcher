@@ -1,6 +1,6 @@
 import { MAX_REMAINING_5H_SELECTION_STRATEGY, RANDOM_SELECTION_STRATEGY, getConfigStrategy, pickProfile } from "./pool-config.js";
-import { getFiveHourRemainingPercent, readOfficialRateLimits } from "./rate-limits.js";
-import { prepareCodexHome } from "./runtime-home.js";
+import { getFiveHourRemainingPercent } from "./rate-limits.js";
+import { getRateLimitCache } from "./rate-limit-cache.js";
 
 function isOfficialCodexProbeCandidate(profile) {
   return Boolean(profile?.auth || profile?.authFile);
@@ -65,86 +65,87 @@ export async function selectLaunchProfile({
     };
   }
 
-  const officialCandidates = config.profiles
-    .map((profile, index) => ({ profile, index }))
-    .filter(({ profile }) => isOfficialCodexProbeCandidate(profile));
-  const skippedProfiles = config.profiles.filter((profile) => !isOfficialCodexProbeCandidate(profile));
-
-  if (officialCandidates.length === 0) {
-    return {
-      profile: fallbackToRandom(config),
-      diagnostics: {
-        mode: "random-fallback",
-        reason: "no_official_candidates",
-        skippedProfiles,
-      },
-    };
+  // Use cached rate limits for fast selection
+  const cache = getRateLimitCache({ codexCommand: launchCommand });
+  
+  // Load existing cache first
+  if (!cache.cache) {
+    await cache.load();
   }
 
-  const successfulProbes = [];
-  const failedProbes = [];
+  // Check if cache is stale (> 5 minutes old) and refresh in background if needed
+  const cacheAge = cache.cache?.updatedAt ? Date.now() - cache.cache.updatedAt : Infinity;
+  const needsRefresh = cacheAge > 5 * 60 * 1000; // 5 minutes
 
-  for (const candidate of officialCandidates) {
-    const runtime = await prepareCodexHome({
-      configDir,
-      config,
-      profile: candidate.profile,
-      appType: cliContext.appType,
-      writeFiles: true,
-    });
-
-    try {
-      const result = await readOfficialRateLimits({
-        codexCommand: launchCommand,
-        env: runtime.env,
-        cwd,
-      });
-
-      successfulProbes.push({
-        ...candidate,
-        runtime,
-        snapshot: result.snapshot,
-        remaining5hPercent: getFiveHourRemainingPercent(result.snapshot),
-      });
-    } catch (error) {
-      failedProbes.push({
-        ...candidate,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  // Try to get best profile from cache
+  const cachedBest = cache.getProfileWithMostRemaining();
+  
+  if (cachedBest && !needsRefresh) {
+    // Cache is fresh, use it directly
+    const matchedProfile = config.profiles.find((p) => p.name === cachedBest.profileName);
+    if (matchedProfile) {
+      return {
+        profile: matchedProfile,
+        diagnostics: {
+          mode: MAX_REMAINING_5H_SELECTION_STRATEGY,
+          selectedRemaining5hPercent: getFiveHourRemainingPercent(cachedBest.snapshot),
+          source: "cache",
+          cacheAgeMs: cacheAge,
+        },
+      };
     }
   }
 
-  if (successfulProbes.length > 0) {
-    successfulProbes.sort(byRemainingDescending);
-    return {
-      profile: successfulProbes[0].profile,
-      diagnostics: {
-        mode: MAX_REMAINING_5H_SELECTION_STRATEGY,
-        selectedRemaining5hPercent: successfulProbes[0].remaining5hPercent,
-        successfulProbes,
-        failedProbes,
-        skippedProfiles,
-      },
-    };
+  // Cache is stale or missing, trigger background refresh but use best available
+  if (needsRefresh) {
+    // Start background refresh but don't wait
+    cache.refreshProfiles(config.profiles).catch(() => {});
   }
 
-  if (skippedProfiles.length > 0) {
-    return {
-      profile: fallbackToRandom({
-        ...config,
-        profiles: skippedProfiles,
-      }),
-      diagnostics: {
-        mode: "random-fallback",
-        reason: "official_probe_failed",
-        failedProbes,
-        skippedProfiles,
-      },
-    };
+  // If we have any cached data, use it for selection
+  if (cachedBest) {
+    const matchedProfile = config.profiles.find((p) => p.name === cachedBest.profileName);
+    if (matchedProfile) {
+      return {
+        profile: matchedProfile,
+        diagnostics: {
+          mode: MAX_REMAINING_5H_SELECTION_STRATEGY,
+          selectedRemaining5hPercent: getFiveHourRemainingPercent(cachedBest.snapshot),
+          source: "cache-stale",
+          cacheAgeMs: cacheAge,
+        },
+      };
+    }
   }
 
-  const failureSummary = failedProbes
-    .map((entry) => `${entry.profile.name}: ${entry.error}`)
-    .join(" | ");
-  throw new Error(`No official Codex profiles passed live rate-limit probing. ${failureSummary}`);
+  // No cache available, fall back to random
+  return {
+    profile: fallbackToRandom(config),
+    diagnostics: {
+      mode: "random-fallback",
+      reason: "no-cache",
+    },
+  };
+}
+
+export function startRateLimitCacheRefresh(profiles, options = {}) {
+  const cache = getRateLimitCache({
+    ...options,
+    configDir: options.configDir || process.cwd(),
+  });
+  
+  // Start background refresh cycle
+  cache.startBackgroundRefresh(profiles);
+  
+  return cache;
+}
+
+export function stopRateLimitCacheRefresh() {
+  const cache = getRateLimitCache();
+  cache.stopBackgroundRefresh();
+}
+
+export function getRateLimitCacheStatus() {
+  const cache = getRateLimitCache();
+  return cache.getStatus();
 }

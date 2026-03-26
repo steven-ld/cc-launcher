@@ -8,7 +8,8 @@ import { detectCliContext } from "./app-context.js";
 import { formatDoctorReport, formatInitReport, inspectRuntimeSetup } from "./init-doctor.js";
 import { pruneManagedRuntimeHomes } from "./managed-profile-state.js";
 import { loadPoolConfig, pickProfile } from "./pool-config.js";
-import { selectLaunchProfile } from "./profile-selection.js";
+import { selectLaunchProfile, getRateLimitCacheStatus, startRateLimitCacheRefresh } from "./profile-selection.js";
+import { runProxyCommand } from "./proxy-server.js";
 import { formatUsageReport, readCachedRateLimits, readOfficialRateLimits } from "./rate-limits.js";
 import { prepareCodexHome, resolveRuntimeRoot } from "./runtime-home.js";
 
@@ -24,6 +25,7 @@ Usage:
   ${cliContext.cliName} doctor [--pool-config FILE] [--pool-source TYPE] [--pool-source-db FILE]
   ${cliContext.cliName} list [--pool-config FILE] [--pool-source TYPE] [--pool-source-db FILE]
   ${cliContext.cliName} pick [--pool-config FILE] [--pool-source TYPE] [--pool-source-db FILE] [--pool-profile NAME]
+  ${cliContext.cliName} proxy [--pool-config FILE] [--pool-source TYPE] [--pool-source-db FILE] [--pool-profile NAME] [--pool-bin COMMAND] [--pool-proxy-host HOST] [--pool-proxy-port PORT]
   ${cliContext.cliName} run [--pool-config FILE] [--pool-source TYPE] [--pool-source-db FILE] [--pool-profile NAME] [--pool-bin COMMAND] [--pool-dry-run] [-- ${cliContext.command.toUpperCase()}_ARGS...]
 ${usageLine}
 
@@ -46,6 +48,10 @@ Aliases:
   --dry-run               Alias of --pool-dry-run
   --pool-bin COMMAND      Override configured launch command
   --bin COMMAND           Alias of --pool-bin
+  --pool-proxy-host HOST  Override proxy listen host
+  --proxy-host HOST       Alias of --pool-proxy-host
+  --pool-proxy-port PORT  Override proxy listen port
+  --proxy-port PORT       Alias of --pool-proxy-port
   --pool-json             Print usage output as JSON
   --json                  Alias of --pool-json
   --pool-help             Show this help
@@ -54,6 +60,7 @@ Examples:
   ${cliContext.cliName} init
   ${cliContext.cliName} doctor
   ${cliContext.cliName} list
+  ${cliContext.cliName} proxy
   ${cliContext.cliName} run -- --help
   ${cliContext.cliName} run --pool-profile profile-a -- --help
 `;
@@ -71,14 +78,20 @@ export function parseCliArgs(argv) {
   let sourceDbPath;
   let profileName;
   let codexCommand;
+  let proxyHost;
+  let proxyPort;
   let dryRun = false;
   let poolList = false;
   let outputJson = false;
   let passthroughMode = false;
   const codexArgs = [];
 
-  if (args[0] && ["init", "doctor", "list", "pick", "run", "usage"].includes(args[0])) {
+  // Default to proxy mode with auto-load-balancing if no command specified
+  if (args[0] && ["init", "doctor", "list", "pick", "proxy", "run", "usage", "cache"].includes(args[0])) {
     command = args.shift();
+  } else if (!args[0] || !args[0].startsWith("--")) {
+    // No command or first arg is not a flag -> default to proxy with load balancing
+    command = "proxy";
   }
 
   while (args.length > 0) {
@@ -116,6 +129,19 @@ export function parseCliArgs(argv) {
 
     if (current.startsWith("--pool-bin=")) {
       codexCommand = current.slice("--pool-bin=".length);
+      continue;
+    }
+
+    if (current.startsWith("--pool-proxy-host=")) {
+      proxyHost = current.slice("--pool-proxy-host=".length);
+      continue;
+    }
+
+    if (current.startsWith("--pool-proxy-port=")) {
+      proxyPort = Number.parseInt(current.slice("--pool-proxy-port=".length), 10);
+      if (!Number.isInteger(proxyPort) || proxyPort <= 0 || proxyPort > 65535) {
+        throw new Error(`--pool-proxy-port requires a valid port.`);
+      }
       continue;
     }
 
@@ -159,6 +185,22 @@ export function parseCliArgs(argv) {
           throw new Error(`${current} requires a command.`);
         }
         break;
+      case "--proxy-host":
+      case "--pool-proxy-host":
+        proxyHost = args.shift();
+        if (!proxyHost) {
+          throw new Error(`${current} requires a host.`);
+        }
+        break;
+      case "--proxy-port":
+      case "--pool-proxy-port": {
+        const rawProxyPort = args.shift();
+        proxyPort = Number.parseInt(rawProxyPort, 10);
+        if (!Number.isInteger(proxyPort) || proxyPort <= 0 || proxyPort > 65535) {
+          throw new Error(`${current} requires a valid port.`);
+        }
+        break;
+      }
       case "--json":
       case "--pool-json":
         outputJson = true;
@@ -188,6 +230,8 @@ export function parseCliArgs(argv) {
     sourceDbPath,
     profileName,
     codexCommand,
+    proxyHost,
+    proxyPort,
     dryRun,
     outputJson,
     codexArgs,
@@ -403,6 +447,63 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
   if (parsed.command === "list") {
     listProfiles(config);
     return 0;
+  }
+
+  if (parsed.command === "cache") {
+    if (cliContext.appType !== "codex") {
+      throw new Error(`${cliContext.cliName} does not support cache command.`);
+    }
+
+    // Trigger a cache refresh
+    const launchCommand = parsed.codexCommand || config.codexCommand || cliContext.command;
+    const cache = startRateLimitCacheRefresh(config.profiles, { codexCommand: launchCommand });
+
+    // Wait for initial refresh to complete (up to 30 seconds)
+    const startTime = Date.now();
+    while (cache.isRefreshing && Date.now() - startTime < 30000) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    const status = getRateLimitCacheStatus();
+    const sorted = cache.getSortedProfiles();
+
+    if (parsed.outputJson) {
+      process.stdout.write(JSON.stringify({ status, profiles: sorted }, null, 2) + "\n");
+    } else {
+      process.stdout.write("Rate Limit Cache Status\n");
+      process.stdout.write("========================\n");
+      process.stdout.write(`Cache loaded: ${status.hasCache ? "yes" : "no"}\n`);
+      process.stdout.write(`Profiles cached: ${status.profileCount}\n`);
+      process.stdout.write(`Last updated: ${status.updatedAt ? new Date(status.updatedAt).toLocaleString() : "never"}\n`);
+      process.stdout.write(`Refreshing: ${status.isRefreshing ? "yes" : "no"}\n`);
+      process.stdout.write("\nProfile Rankings (by 5h remaining):\n");
+      process.stdout.write("--------------------------------\n");
+      for (const entry of sorted) {
+        const pct = entry.remaining5hPercent.toFixed(1);
+        const bar = "█".repeat(Math.floor(entry.remaining5hPercent / 5)) + "░".repeat(20 - Math.floor(entry.remaining5hPercent / 5));
+        process.stdout.write(`${entry.profileName}\n`);
+        process.stdout.write(`  ${bar} ${pct}% remaining\n`);
+      }
+      if (status.errorCount > 0) {
+        process.stdout.write(`\nErrors: ${status.errorCount} profile(s) failed to probe\n`);
+      }
+    }
+    return 0;
+  }
+
+  if (parsed.command === "proxy") {
+    await syncManagedProfilesIfNeeded({
+      configDir,
+      config,
+      metadata,
+      shouldWrite: true,
+    });
+    return runProxyCommand({
+      parsed,
+      config,
+      configDir,
+      cliContext,
+    });
   }
 
   if (parsed.command === "usage") {

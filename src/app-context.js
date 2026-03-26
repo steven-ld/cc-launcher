@@ -8,6 +8,11 @@ export const APP_CONTEXTS = {
     sharedHome: "~/.codex",
     runtimeHomeEnvKey: "CODEX_HOME",
     supportsUsage: true,
+    proxy: {
+      protocol: "ws",
+      host: "127.0.0.1",
+      port: 15721,
+    },
   },
   claude: {
     appType: "claude",
@@ -16,6 +21,11 @@ export const APP_CONTEXTS = {
     sharedHome: "~/.claude",
     runtimeHomeEnvKey: null,
     supportsUsage: false,
+    proxy: {
+      protocol: "http",
+      host: "127.0.0.1",
+      port: 15722,
+    },
   },
 };
 

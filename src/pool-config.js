@@ -15,8 +15,15 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const RANDOM_SELECTION_STRATEGY = "random";
 export const MAX_REMAINING_5H_SELECTION_STRATEGY = "max-remaining-5h";
 
+// Default for Codex: use auto-load-balancing based on remaining 5h quota
+export const DEFAULT_CODEX_STRATEGY = MAX_REMAINING_5H_SELECTION_STRATEGY;
+
 function isSupportedSelectionStrategy(strategy) {
   return strategy === RANDOM_SELECTION_STRATEGY || strategy === MAX_REMAINING_5H_SELECTION_STRATEGY;
+}
+
+function isValidPort(value) {
+  return Number.isInteger(value) && value > 0 && value <= 65535;
 }
 
 function isPlainObject(value) {
@@ -118,8 +125,12 @@ function buildDefaultSourceBackedConfig({ sourceType, sourceDbPath, appType = "c
     codexCommand: appContext.command,
     runtimeRoot: DEFAULT_DIRECT_SOURCE_RUNTIME_ROOT,
     sharedCodexHome: appContext.sharedHome,
+    proxy: {
+      host: appContext.proxy.host,
+      port: appContext.proxy.port,
+    },
     selection: {
-      strategy: RANDOM_SELECTION_STRATEGY,
+      strategy: appContext.appType === "codex" ? DEFAULT_CODEX_STRATEGY : RANDOM_SELECTION_STRATEGY,
     },
     ...(appContext.appType === "codex"
       ? {
@@ -223,6 +234,20 @@ export function validatePoolConfig(config, configPath = "<config>", options = {}
 
   validateEnvObject(config.sharedEnv, "sharedEnv");
 
+  if (config.proxy !== undefined) {
+    if (!isPlainObject(config.proxy)) {
+      throw new Error(`proxy must be an object when provided.`);
+    }
+
+    if (config.proxy.host !== undefined && typeof config.proxy.host !== "string") {
+      throw new Error(`proxy.host must be a string when provided.`);
+    }
+
+    if (config.proxy.port !== undefined && !isValidPort(config.proxy.port)) {
+      throw new Error(`proxy.port must be an integer between 1 and 65535 when provided.`);
+    }
+  }
+
   if (config.sharedConfigToml !== undefined && typeof config.sharedConfigToml !== "string") {
     throw new Error(`sharedConfigToml must be a string when provided.`);
   }
@@ -321,7 +346,7 @@ async function materializeProfileSource(config, configDir, sourceOptions = {}) {
     );
   }
 
-  const imported = loadCcSwitchSource({
+  const imported = await loadCcSwitchSource({
     dbPath: resolvedSourceDbPath,
     appType,
   });
@@ -485,4 +510,13 @@ export function pickProfile(config, options = {}) {
 
 export function resolvePathFromConfig(configDir, targetPath) {
   return path.resolve(configDir, expandHome(targetPath));
+}
+
+export function resolveProxyConfig(config, appType = "codex") {
+  const appContext = resolveAppContext(appType);
+  return {
+    protocol: appContext.proxy.protocol,
+    host: config.proxy?.host ?? appContext.proxy.host,
+    port: config.proxy?.port ?? appContext.proxy.port,
+  };
 }

@@ -77,6 +77,7 @@ cclaude doctor
 ccodex doctor
 ccodex list
 ccodex pick
+ccodex proxy
 ccodex run -- --help
 ccodex usage --json
 ```
@@ -87,6 +88,7 @@ ccodex usage --json
 cclaude doctor
 cclaude list
 cclaude pick
+cclaude proxy
 cclaude run -- --help
 ```
 
@@ -95,6 +97,7 @@ cclaude run -- --help
 - `doctor`：检查命令、数据库和账号池是否可用
 - `list`：查看当前导入了哪些账号
 - `pick`：查看当前会选中哪个账号
+- `proxy`：启动一个稳定的本地代理地址，供外部客户端直接连接
 - `run`：按当前选中的账号启动目标 CLI
 - `usage`：查看 Codex 官方额度，只支持 `ccodex`
 
@@ -103,6 +106,61 @@ cclaude run -- --help
 - `ccodex usage --json` 默认会自动选择一个可用的官方 Codex 账号
 - 如果你想固定某个账号，再额外传 `--pool-profile`
 - `cclaude` 不支持 `usage`
+
+## Proxy Mode
+
+如果你不想每次切换 provider 后都重新进入一轮手动启动，可以直接启动一个本地代理地址。
+
+### Claude
+
+`cclaude proxy` 会启动一个常驻 HTTP 代理。默认地址：
+
+```text
+http://127.0.0.1:15722
+```
+
+它会按当前账号池动态选择一个 Claude provider，并把请求转发到该 provider 在 `cc-switch` 里配置的上游接口。
+
+常用检查接口：
+
+```text
+GET /__cc-launcher/health
+GET /__cc-launcher/providers
+```
+
+### Codex
+
+`ccodex proxy` 会启动一个由 `cc-launcher` 托管的本地 WebSocket 代理。默认地址：
+
+```text
+ws://127.0.0.1:15721
+```
+
+补充说明：
+
+- 你当前 `cc-switch` 里的 Codex provider 是官方登录态，不是独立 `base_url` 型 provider
+- 因此 `ccodex proxy` 会为每个 WebSocket 连接启动一个官方 `codex app-server --listen stdio://` 子代理
+- `cc-launcher` 自己负责监听固定地址，并把 WebSocket 消息桥接到对应子代理
+- 如果不显式指定 profile，会按现有选择策略为每个连接动态选一个可用 profile
+
+如果你要固定某个账号，可以直接在启动时传：
+
+```bash
+ccodex proxy --pool-profile codex-xxxx-yyyy
+```
+
+也可以在连接时用查询参数指定：
+
+```text
+ws://127.0.0.1:15721/?profile=codex-xxxx-yyyy
+```
+
+如果你要改监听地址，可以显式传：
+
+```bash
+cclaude proxy --pool-proxy-host 127.0.0.1 --pool-proxy-port 18080
+ccodex proxy --pool-proxy-host 127.0.0.1 --pool-proxy-port 18081
+```
 
 ## 故障排查
 

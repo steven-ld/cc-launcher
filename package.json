@@ -42,5 +42,8 @@
     "launcher",
     "github-release"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "sql.js": "^1.14.1"
+  }
 }
