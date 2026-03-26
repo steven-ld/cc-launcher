@@ -1,11 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - master
   pull_request:
 
+# CI only runs on PRs. Release workflow handles master branch pushes.
 env:
   NODE_OPTIONS: --disable-warning=ExperimentalWarning
 

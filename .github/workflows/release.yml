@@ -19,7 +19,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Guard: only one of ci/release runs per event
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      is_version_bump: ${{ steps.check.outputs.is_version_bump }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version and tag
+        id: check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Tag push: this IS a release trigger
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "Tag push detected: ${TAG}"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "is_version_bump=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger: release the current version
+            TAG="v${VERSION}"
+            echo "Manual dispatch: releasing ${TAG}"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "is_version_bump=false" >> "$GITHUB_OUTPUT"
+          else
+            # Branch push: check if package.json version changed
+            PREV_VERSION=$(git log --oneline -n 10 --follow --format="" -- package.json | head -1 | xargs -I{} git show {}:package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "")
+
+            if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$VERSION" ]; then
+              TAG="v${VERSION}"
+              echo "Version bump detected: ${PREV_VERSION} → ${VERSION}"
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "is_version_bump=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "No version change (${PREV_VERSION:-none} → ${VERSION}), skipping release."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "is_version_bump=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: guard
+    if: needs.guard.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -54,121 +105,78 @@ jobs:
         id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          
-          # Determine if this is a tag push or branch push
-          IS_TAG=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="v${VERSION}"
-            IS_TAG=true
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-            IS_TAG=true
-          else
-            # Branch push - use version with suffix
+            echo "Tag push detected"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="v${VERSION}"
-            COMMIT_SHORT="${GITHUB_SHA:0:7}"
-            TAG="${TAG}-dev.${COMMIT_SHORT}"
-            echo "Branch push detected, using dev tag: ${TAG}"
+          else
+            TAG="v${VERSION}"
           fi
-          
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
           echo "versioned_tgz=dist/cc-launcher-${VERSION}.tgz" >> "$GITHUB_OUTPUT"
           echo "stable_tgz=dist/cc-launcher.tgz" >> "$GITHUB_OUTPUT"
 
       - name: Run test suite
-        run: npm test || true  # Allow release to proceed even if some tests fail (CI may lack real credentials)
+        run: npm test || true
 
       - name: Pack release tarballs
         run: node ./scripts/pack-release.js
 
+      - name: Auto-tag (branch push with version bump only)
+        if: needs.guard.outputs.is_version_bump == 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release ${TAG}"
+          git push origin "$TAG"
+          echo "Tagged and pushed: ${TAG}"
+
       - name: Generate release notes
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          IS_TAG="${{ steps.version.outputs.is_tag }}"
-          
-          if [ "$IS_TAG" = "true" ]; then
-            # Tag push - use git log for changes
-            PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
-            
-            {
-              echo "## CC Launcher ${TAG}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+
+          {
+            echo "## CC Launcher ${TAG}"
+            echo
+            echo "CLI launcher for Codex and Claude, backed by cc-switch."
+            echo
+            echo "### Install"
+            echo
+            echo '```bash'
+            echo "npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz"
+            echo '```'
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              echo "### Changes since ${PREV_TAG}"
               echo
-              echo "CLI launcher for Codex and Claude, backed by cc-switch."
-              echo
-              echo "### Install the latest package"
-              echo
-              echo '```bash'
-              echo "npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz"
-              echo '```'
-              echo
-              if [ -n "$PREV_TAG" ]; then
-                echo "### Changes since ${PREV_TAG}"
-                echo
-                git log "${PREV_TAG}..HEAD" --pretty=format:'- %s (%h)' --no-merges | head -50
-              else
-                echo "### Initial release"
-              fi
-            } > release-notes.md
-          else
-            # Branch push - auto dev release
-            {
-              echo "## CC Launcher ${TAG} (Dev Preview)"
-              echo
-              echo "⚠️ **This is an auto-generated dev build from master branch.**"
-              echo
-              echo "For production, use the latest stable release."
-              echo
-              echo "### Install this dev package"
-              echo
-              echo '```bash'
-              echo "npm install -g https://github.com/${{ github.repository }}/releases/download/${TAG}/cc-launcher.tgz"
-              echo '```'
-              echo
-              echo "### Latest commits"
-              echo
-              git log --pretty=format:'- %s (%h)' --no-merges | head -20
-            } > release-notes.md
-          fi
+              git log "${PREV_TAG}..HEAD" --pretty=format:'- %s (%h)' --no-merges | head -50
+            else
+              echo "### Initial release"
+            fi
+          } > release-notes.md
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          IS_TAG="${{ steps.version.outputs.is_tag }}"
-          
-          # Set as latest only for tag pushes
-          if [ "$IS_TAG" = "true" ]; then
-            gh release create "$TAG" \
-              "${{ steps.version.outputs.versioned_tgz }}" \
-              "${{ steps.version.outputs.stable_tgz }}" \
-              --repo "${{ github.repository }}" \
-              --title "${TAG} — CC Launcher" \
-              --notes-file release-notes.md \
-              --latest
-          else
-            # Dev release - don't mark as latest
-            gh release create "$TAG" \
-              "${{ steps.version.outputs.versioned_tgz }}" \
-              "${{ steps.version.outputs.stable_tgz }}" \
-              --repo "${{ github.repository }}" \
-              --title "${TAG} (Dev Preview)" \
-              --notes-file release-notes.md \
-              --draft
-          fi
+          gh release create "$TAG" \
+            "${{ steps.version.outputs.versioned_tgz }}" \
+            "${{ steps.version.outputs.stable_tgz }}" \
+            --repo "${{ github.repository }}" \
+            --title "CC Launcher ${TAG}" \
+            --notes-file release-notes.md \
+            --latest
 
       - name: Summary
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          IS_TAG="${{ steps.version.outputs.is_tag }}"
-          
           echo "### Release ${TAG}" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$IS_TAG" = "true" ]; then
-            echo "- Status: **Stable Release**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Latest install: npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- Status: **Dev Preview (Draft)**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- This release is not marked as 'Latest'" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "- Version: ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Install: npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz" >> "$GITHUB_STEP_SUMMARY"
