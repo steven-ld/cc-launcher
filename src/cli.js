@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { detectCliContext } from "./app-context.js";
 import { formatDoctorReport, formatInitReport, inspectRuntimeSetup } from "./init-doctor.js";
 import { pruneManagedRuntimeHomes } from "./managed-profile-state.js";
-import { loadPoolConfig, pickProfile } from "./pool-config.js";
+import { loadPoolConfig, pickProfile, resolveProxyConfig } from "./pool-config.js";
 import { selectLaunchProfile, getRateLimitCacheStatus, startRateLimitCacheRefresh } from "./profile-selection.js";
 import { getProfileStateManager } from "./profile-state.js";
 import { runProxyCommand } from "./proxy-server.js";
