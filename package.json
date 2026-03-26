@@ -1,6 +1,6 @@
 {
   "name": "cc-launcher",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Production-ready cc-switch backed launcher for Codex and Claude CLI workflows",
   "type": "module",
   "bin": {
