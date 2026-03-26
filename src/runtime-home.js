@@ -148,6 +148,10 @@ function mergeManagedEnv(config, profile) {
   const env = {};
   applyEnvLayer(env, config.sharedEnv);
   applyEnvLayer(env, profile.env);
+  // Strip ANTHROPIC_BASE_URL so the spawned CLI routes through the cc-launcher
+  // proxy (127.0.0.1:15722) instead of connecting upstream directly.
+  // The proxy resolves the upstream target from profile.sourceMeta.upstreamUrl.
+  delete env.ANTHROPIC_BASE_URL;
   return env;
 }
 
@@ -189,6 +193,17 @@ async function buildManagedSettingsPayload(config, profile, appContext) {
   const baseSettings = (await loadJsonObjectIfExists(GLOBAL_CLAUDE_SETTINGS_PATH, "Claude settings")) ?? {};
   const baseEnv = isPlainObject(baseSettings.env) ? stripClaudeProviderEnv(baseSettings.env) : {};
   const env = applyEnvLayer(baseEnv, mergeManagedEnv(config, profile));
+  // mergeManagedEnv strips ANTHROPIC_BASE_URL from the spawned process env so that
+  // cclaude routes through the cc-launcher proxy.  Restore it here so that it appears
+  // in settings.json -- the proxy server will still intercept the request and forward
+  // it to the correct upstream based on profile.sourceMeta.upstreamUrl.
+  // Restore ANTHROPIC_BASE_URL so cclaude reads the upstream target from settings.json.
+  // For cc-switch profiles this comes from sourceMeta.upstreamUrl; for static profiles
+  // it comes directly from profile.env.
+  const upstreamUrl = profile.sourceMeta?.upstreamUrl ?? profile.env?.ANTHROPIC_BASE_URL;
+  if (upstreamUrl) {
+    env.ANTHROPIC_BASE_URL = upstreamUrl;
+  }
   const settings = { ...baseSettings };
 
   // Let the selected provider env decide the effective model instead of a global pinned user model.
@@ -211,6 +226,9 @@ function mergeEnv(baseEnv, config, profile, runtimeHome, appContext) {
   if (appContext.runtimeHomeEnvKey) {
     merged[appContext.runtimeHomeEnvKey] = runtimeHome;
   }
+  // Strip ANTHROPIC_BASE_URL so the spawned CLI routes through the cc-launcher
+  // proxy instead of connecting upstream directly.
+  delete merged.ANTHROPIC_BASE_URL;
   return merged;
 }
 

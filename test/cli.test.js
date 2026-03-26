@@ -214,13 +214,22 @@ process.stdout.write(
 
   const payload = JSON.parse(fakeLine.slice("FAKE:".length));
   assert.equal(payload.settingSources, "project,local");
+  // ANTHROPIC_BASE_URL is kept in settings.json (which cclaude reads for its
+  // effective configuration) so that cclaude knows the upstream target, while
+  // being stripped from the spawned process env so that cclaude actually sends
+  // the request through the HTTP_PROXY chain to the cc-launcher proxy instead
+  // of connecting upstream directly.
   assert.equal(payload.settings.env.ANTHROPIC_BASE_URL, "https://open.bigmodel.cn/api/anthropic");
   assert.equal(payload.settings.env.ANTHROPIC_MODEL, "glm-5");
   assert.equal(payload.settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
   assert.equal(payload.settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined);
   assert.equal(payload.settings.model, undefined);
   assert.deepEqual(payload.settings.permissions.allow, ["Bash(git fetch:*)"]);
-  assert.equal(payload.env.ANTHROPIC_BASE_URL, "https://open.bigmodel.cn/api/anthropic");
+  // ANTHROPIC_BASE_URL is intentionally absent from the spawned process env so
+  // that cclaude routes through the cc-launcher proxy (127.0.0.1:15722) instead
+  // of connecting upstream directly. The proxy resolves the upstream target from
+  // profile.sourceMeta.upstreamUrl.
+  assert.equal(payload.env.ANTHROPIC_BASE_URL, undefined);
   assert.equal(payload.env.ANTHROPIC_MODEL, "glm-5");
 
   await fs.rm(tempRoot, { recursive: true, force: true });

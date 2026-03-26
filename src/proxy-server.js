@@ -93,7 +93,10 @@ function respondJson(response, statusCode, payload) {
 }
 
 function resolveClaudeTarget(profile) {
-  const baseUrl = profile.env?.ANTHROPIC_BASE_URL;
+  // Prefer the upstream URL stored in sourceMeta (survives Base URL stripping
+  // in mergeManagedEnv). Fall back to profile.env for other profile sources.
+  const storedUrl = profile.sourceMeta?.upstreamUrl;
+  const baseUrl = storedUrl ?? profile.env?.ANTHROPIC_BASE_URL;
   if (!baseUrl || typeof baseUrl !== "string") {
     throw new Error(`Profile ${profile.name} does not define ANTHROPIC_BASE_URL.`);
   }
@@ -166,7 +169,7 @@ async function startClaudeProxy({ config, cliContext, host, port }) {
           profiles: config.profiles.map((profile) => ({
             name: profile.name,
             providerId: profile.sourceMeta?.providerId ?? null,
-            upstream: profile.env?.ANTHROPIC_BASE_URL ?? null,
+            upstream: profile.sourceMeta?.upstreamUrl ?? profile.env?.ANTHROPIC_BASE_URL ?? null,
           })),
         });
       }

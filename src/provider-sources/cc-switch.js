@@ -179,6 +179,12 @@ export function materializeCcSwitchCodexProfile({
     profile.env = env;
   }
 
+  // Store the original upstream URL separately so it survives Base URL stripping in mergeManagedEnv
+  const upstreamUrl = env?.ANTHROPIC_BASE_URL;
+  if (upstreamUrl) {
+    profile.sourceMeta.upstreamUrl = upstreamUrl;
+  }
+
   return profile;
 }
 
