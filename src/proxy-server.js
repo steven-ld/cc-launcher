@@ -7,6 +7,25 @@ import readline from "node:readline";
 import { pickProfile, resolveProxyConfig } from "./pool-config.js";
 import { selectLaunchProfile, startRateLimitCacheRefresh, stopRateLimitCacheRefresh } from "./profile-selection.js";
 import { prepareCodexHome } from "./runtime-home.js";
+import { getProfileStateManager } from "./profile-state.js";
+
+// Auth error patterns that indicate expired/invalid credentials
+const AUTH_ERROR_PATTERNS = [
+  /auth.*fail/i,
+  /token.*expired/i,
+  /invalid.*auth/i,
+  /401\s+Unauthorized/i,
+  /unauthorized.*api/i,
+  /not.*authenticated/i,
+  /please.*log.*in/i,
+  /authentication.*required/i,
+  /credentials.*expired/i,
+  /oauth.*fail/i,
+  /invalid.*token/i,
+  /login.*required/i,
+  /session.*expired/i,
+  /refresh.*token.*fail/i,
+];
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -440,7 +459,18 @@ async function startCodexProxy({
       });
 
       child.stderr.on("data", (chunk) => {
-        process.stderr.write(`[cc-launcher] codex app-server(${selectedProfile.name}): ${String(chunk)}`);
+        const text = String(chunk);
+        process.stderr.write(`[cc-launcher] codex app-server(${selectedProfile.name}): ${text}`);
+        
+        // Check if this is an auth-related error
+        for (const pattern of AUTH_ERROR_PATTERNS) {
+          if (pattern.test(text)) {
+            const stateManager = getProfileStateManager();
+            stateManager.disable(selectedProfile.name, `auth_error: ${text.slice(0, 100)}`);
+            process.stderr.write(`[cc-launcher] Disabled ${selectedProfile.name} due to auth error. Will retry in 30 minutes.\n`);
+            break;
+          }
+        }
       });
 
       child.on("exit", (code, signal) => {

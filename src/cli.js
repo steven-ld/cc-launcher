@@ -9,6 +9,7 @@ import { formatDoctorReport, formatInitReport, inspectRuntimeSetup } from "./ini
 import { pruneManagedRuntimeHomes } from "./managed-profile-state.js";
 import { loadPoolConfig, pickProfile } from "./pool-config.js";
 import { selectLaunchProfile, getRateLimitCacheStatus, startRateLimitCacheRefresh } from "./profile-selection.js";
+import { getProfileStateManager } from "./profile-state.js";
 import { runProxyCommand } from "./proxy-server.js";
 import { formatUsageReport, readCachedRateLimits, readOfficialRateLimits } from "./rate-limits.js";
 import { prepareCodexHome, resolveRuntimeRoot } from "./runtime-home.js";
@@ -87,7 +88,7 @@ export function parseCliArgs(argv) {
   const codexArgs = [];
 
   // Default to proxy mode with auto-load-balancing if no command specified
-  if (args[0] && ["init", "doctor", "list", "pick", "proxy", "run", "usage", "cache"].includes(args[0])) {
+  if (args[0] && ["init", "doctor", "list", "pick", "proxy", "run", "usage", "cache", "status", "enable", "disable"].includes(args[0])) {
     command = args.shift();
   } else if (!args[0] || !args[0].startsWith("--")) {
     // No command or first arg is not a flag -> default to proxy with load balancing
@@ -428,6 +429,11 @@ function printLaunchSelectionDiagnostics(diagnostics) {
 
 export async function main(argv = process.argv.slice(2), cliContext = detectCliContext(process.argv[1])) {
   const parsed = parseCliArgs(argv);
+  
+  // Initialize profile state manager early
+  const stateManager = getProfileStateManager();
+  await stateManager.load();
+  
   if (parsed.help) {
     printHelp(cliContext);
     return 0;
@@ -487,6 +493,78 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       if (status.errorCount > 0) {
         process.stdout.write(`\nErrors: ${status.errorCount} profile(s) failed to probe\n`);
       }
+    }
+    return 0;
+  }
+
+  if (parsed.command === "status") {
+    const stateManager = getProfileStateManager();
+    await stateManager.load();
+    
+    const disabled = stateManager.getDisabledProfiles();
+    
+    if (parsed.outputJson) {
+      process.stdout.write(JSON.stringify({
+        total: config.profiles.length,
+        enabled: config.profiles.filter((p) => !stateManager.isDisabled(p.name)).length,
+        disabled,
+      }, null, 2) + "\n");
+    } else {
+      process.stdout.write("Profile Status\n");
+      process.stdout.write("==============\n");
+      process.stdout.write(`Total profiles: ${config.profiles.length}\n`);
+      process.stdout.write(`Enabled: ${config.profiles.filter((p) => !stateManager.isDisabled(p.name)).length}\n`);
+      process.stdout.write(`Disabled: ${disabled.length}\n`);
+      
+      if (disabled.length > 0) {
+        process.stdout.write("\nDisabled profiles:\n");
+        process.stdout.write("------------------\n");
+        for (const entry of disabled) {
+          const remainingMin = Math.ceil(entry.remainingMs / 60000);
+          process.stdout.write(`${entry.name}\n`);
+          process.stdout.write(`  Reason: ${entry.reason}\n`);
+          process.stdout.write(`  Retry in: ${remainingMin} minutes\n`);
+        }
+      }
+    }
+    return 0;
+  }
+
+  if (parsed.command === "enable") {
+    const stateManager = getProfileStateManager();
+    await stateManager.load();
+    
+    if (!parsed.profileName) {
+      throw new Error("--pool-profile is required for enable command");
+    }
+    
+    const wasDisabled = stateManager.isDisabled(parsed.profileName);
+    stateManager.enable(parsed.profileName);
+    
+    if (wasDisabled) {
+      process.stdout.write(`Enabled profile: ${parsed.profileName}\n`);
+    } else {
+      process.stdout.write(`Profile ${parsed.profileName} was not disabled.\n`);
+    }
+    return 0;
+  }
+
+  if (parsed.command === "disable") {
+    const stateManager = getProfileStateManager();
+    await stateManager.load();
+    
+    if (!parsed.profileName) {
+      throw new Error("--pool-profile is required for disable command");
+    }
+    
+    const wasEnabled = !stateManager.isDisabled(parsed.profileName);
+    stateManager.disable(parsed.profileName, "manual");
+    
+    if (wasEnabled) {
+      process.stdout.write(`Disabled profile: ${parsed.profileName}\n`);
+      process.stdout.write(`Will retry in 30 minutes.\n`);
+    } else {
+      process.stdout.write(`Profile ${parsed.profileName} was already disabled.\n`);
     }
     return 0;
   }
