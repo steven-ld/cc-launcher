@@ -49,7 +49,11 @@ jobs:
         id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          TAG="${GITHUB_REF_NAME:-v${VERSION}}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "versioned_tgz=dist/cc-launcher-${VERSION}.tgz" >> "$GITHUB_OUTPUT"
@@ -62,33 +66,29 @@ jobs:
         run: node ./scripts/pack-release.js
 
       - name: Generate release notes
-        id: notes
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
           PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
 
           {
-            echo 'body<<NOTES_EOF'
             echo "## CC Launcher ${TAG}"
-            echo ""
+            echo
             echo "CLI launcher for Codex and Claude, backed by cc-switch."
-            echo ""
+            echo
             echo "### Install the latest package"
-            echo ""
+            echo
             echo '```bash'
             echo "npm install -g https://github.com/${{ github.repository }}/releases/latest/download/cc-launcher.tgz"
             echo '```'
-            echo ""
+            echo
             if [ -n "$PREV_TAG" ]; then
               echo "### Changes since ${PREV_TAG}"
-              echo ""
+              echo
               git log "${PREV_TAG}..HEAD" --pretty=format:'- %s (%h)' --no-merges | head -50
             else
               echo "### Initial release"
             fi
-            echo 'NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
+          } > release-notes.md
 
       - name: Create GitHub Release
         env:
@@ -100,7 +100,7 @@ jobs:
             "${{ steps.version.outputs.stable_tgz }}" \
             --repo "${{ github.repository }}" \
             --title "${TAG} — CC Launcher" \
-            --notes "${{ steps.notes.outputs.body }}" \
+            --notes-file release-notes.md \
             --latest
 
       - name: Summary
