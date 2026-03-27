@@ -243,7 +243,7 @@ async function probeCodexProfile({ profile, configDir, codexCommand, timeoutMs =
   return new Promise(async (resolve, reject) => {
     const { env: runtimeEnv } = await prepareCodexHome({
       configDir: configDir || os.homedir(),
-      config: { sharedEnv: {}, runtimeRoot: "~/.cc-launcher/runtime" },
+      config: { sharedEnv: {}, runtimeRoot: "~/.cc-launcher/runtime", inheritGlobalConfig: false },
       profile,
       appType: "codex",
       baseEnv: process.env,

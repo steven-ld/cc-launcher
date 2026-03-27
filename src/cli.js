@@ -639,7 +639,7 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
     });
     const runtime = await prepareCodexHome({
       configDir,
-      config,
+      config: { ...config, inheritGlobalConfig: false },
       profile,
       appType: cliContext.appType,
       writeFiles: true,
@@ -714,7 +714,7 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
   });
   const runtime = await prepareCodexHome({
     configDir,
-    config,
+    config: { ...config, inheritGlobalConfig: false },
     profile,
     appType: cliContext.appType,
     writeFiles: parsed.command === "run" && !parsed.dryRun,

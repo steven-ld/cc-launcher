@@ -131,12 +131,7 @@ export async function selectLaunchProfile({
   }
 
   // ── Codex quota strategy ───────────────────────────────────────────────────
-  // Always delegate to pickProfile (live probe) for Codex. The original behavior
-  // re-probes every time, which is necessary because:
-  //   1. CC Cloud providers can return non-standard responses
-  //   2. Quota data can change frequently
-  //   3. The test suite depends on fresh probe results (auth failures change state)
-  // Cache is only consulted for background refresh, never for blocking selection.
+  // Use live probe results to select the profile with most remaining quota.
   // Start background refresh so subsequent calls are faster.
   const cache = getRateLimitCache({
     configDir: configDir || cwd || process.cwd(),
@@ -150,10 +145,53 @@ export async function selectLaunchProfile({
     cache.refreshProfiles(enabledProfiles).catch(() => {});
   }
 
+  // Find the profile with most remaining quota from probe results
+  const bestFromCache = cache.getProfileWithMostRemaining();
+
+  // Track failed probes for diagnostics
+  const failedProbes = [];
+  if (cache.cache?.profiles) {
+    for (const entry of cache.cache.profiles) {
+      if (!entry.snapshot && entry.profileName) {
+        failedProbes.push(entry.profileName);
+      }
+    }
+  }
+
   let selectedProfile;
-  try {
-    selectedProfile = pickProfile(filteredConfig);
-  } catch {
+  let selectedRemaining5hPercent = null;
+
+  if (bestFromCache && bestFromCache.profileName) {
+    // Match cached profile name to enabled profiles
+    selectedProfile = filteredConfig.profiles.find(
+      (p) => p.name === bestFromCache.profileName,
+    );
+    if (selectedProfile) {
+      selectedRemaining5hPercent = getFiveHourRemainingPercent(bestFromCache.snapshot);
+    }
+  }
+
+  // If no valid probe result from cache, probe profiles sequentially until we find a working one
+  if (!selectedProfile && allowLiveProbe) {
+    for (const profile of filteredConfig.profiles) {
+      try {
+        const result = await cache.refreshProfiles([profile]);
+        const entry = result?.profiles?.[0];
+        if (entry?.snapshot) {
+          selectedProfile = profile;
+          selectedRemaining5hPercent = getFiveHourRemainingPercent(entry.snapshot);
+          break;
+        } else {
+          failedProbes.push(profile.name);
+        }
+      } catch (e) {
+        failedProbes.push(profile.name);
+      }
+    }
+  }
+
+  // Final fallback to random if all probes failed
+  if (!selectedProfile) {
     selectedProfile = fallbackToRandom(filteredConfig);
   }
 
@@ -165,6 +203,8 @@ export async function selectLaunchProfile({
         : RANDOM_SELECTION_STRATEGY,
       source: "live-probe",
       cacheAgeMs: cacheAge,
+      selectedRemaining5hPercent,
+      failedProbes,
       disabledProfiles: disabledProfiles.map((p) => p.name),
     },
   };

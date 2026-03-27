@@ -28,28 +28,49 @@ const CLAUDE_PROVIDER_ENV_PREFIXES = ["ANTHROPIC_"];
  */
 function sanitizeConfigToml(toml) {
   const lines = toml.split("\n");
-  const seen = new Map(); // key -> last line index
-  const removable = new Set();
+  const result = [];
+  let inMcpServers = false;
+  let mcpIndent = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Only consider non-empty, non-comment lines that look like top-level scalars
-    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*.+$/);
-    if (!match) continue;
-    const key = match[1];
-
-    if (key === "model") {
-      removable.add(i);
+  for (const line of lines) {
+    // Detect MCP servers section start
+    if (line.match(/^\[mcp_servers(\..+)?\]$/)) {
+      inMcpServers = true;
+      mcpIndent = line.match(/^\s*/)[0].length;
       continue;
     }
 
-    if (seen.has(key)) {
-      removable.add(seen.get(key)); // remove the earlier occurrence
+    // End MCP servers section when we hit another [section] or a non-indented line
+    if (inMcpServers) {
+      if (line.match(/^\[/) || (line.trim() && !line.startsWith(" ".repeat(mcpIndent)))) {
+        inMcpServers = false;
+        result.push(line);
+      }
+      // Skip all lines inside [mcp_servers]
+      continue;
     }
-    seen.set(key, i);
+
+    // Remove top-level model (handled by provider env)
+    if (line.match(/^model\s*=/)) {
+      continue;
+    }
+
+    // Deduplicate top-level scalar keys (keep last)
+    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=/);
+    if (match && !line.startsWith(" ")) {
+      const key = match[1];
+      // Find and remove earlier occurrence of same key
+      for (let i = result.length - 1; i >= 0; i--) {
+        if (result[i].match(new RegExp(`^${key}\\s*=`))) {
+          result.splice(i, 1);
+          break;
+        }
+      }
+    }
+
+    result.push(line);
   }
 
-  const result = lines.filter((_, i) => !removable.has(i));
   // Collapse consecutive blank lines into at most one
   let out = result.join("\n").replace(/\n{3,}/g, "\n\n");
   // Ensure trailing newline
