@@ -28,7 +28,7 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       is_version_bump: ${{ steps.check.outputs.is_version_bump }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
