@@ -65,6 +65,45 @@ function trimToUndefined(value) {
   return trimmed ? trimmed : undefined;
 }
 
+function trimBlankLines(lines) {
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start].trim() === "") {
+    start += 1;
+  }
+
+  while (end > start && lines[end - 1].trim() === "") {
+    end -= 1;
+  }
+
+  return lines.slice(start, end);
+}
+
+function splitTomlFragment(fragment) {
+  const lines = fragment.split(/\r?\n/);
+  const rootLines = [];
+  const tableLines = [];
+  let inTableBlock = false;
+
+  for (const line of lines) {
+    if (/^\s*\[\[?.+\]\]?\s*(#.*)?$/.test(line)) {
+      inTableBlock = true;
+    }
+
+    if (inTableBlock) {
+      tableLines.push(line);
+    } else {
+      rootLines.push(line);
+    }
+  }
+
+  return {
+    root: trimBlankLines(rootLines).join("\n"),
+    tables: trimBlankLines(tableLines).join("\n"),
+  };
+}
+
 function mergeTomlFragments(fragments) {
   const normalized = fragments
     .map((fragment) => trimToUndefined(fragment))
@@ -74,7 +113,20 @@ function mergeTomlFragments(fragments) {
     return undefined;
   }
 
-  return normalized.join("\n\n");
+  const rootSections = [];
+  const tableSections = [];
+
+  for (const fragment of normalized) {
+    const { root, tables } = splitTomlFragment(fragment);
+    if (root) {
+      rootSections.push(root);
+    }
+    if (tables) {
+      tableSections.push(tables);
+    }
+  }
+
+  return [...rootSections, ...tableSections].join("\n\n");
 }
 
 function normalizeEnv(env) {

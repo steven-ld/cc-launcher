@@ -12,7 +12,10 @@ import { loadPoolConfig } from "../src/pool-config.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_ENTRY = path.join(REPO_ROOT, "src", "cli.js");
 
-function createCcSwitchDb(dbPath) {
+function createCcSwitchDb(dbPath, options = {}) {
+  const {
+    commonConfigCodex = 'model_reasoning_effort = "high"\n',
+  } = options;
   const database = new DatabaseSync(dbPath);
 
   database.exec(`
@@ -61,7 +64,7 @@ function createCcSwitchDb(dbPath) {
     VALUES (?, ?)
   `);
 
-  insertSetting.run("common_config_codex", 'model_reasoning_effort = "high"\n');
+  insertSetting.run("common_config_codex", commonConfigCodex);
 
   insertProvider.run(
     "provider-a",
@@ -209,6 +212,55 @@ test("loadPoolConfig imports codex profiles from a cc-switch database source", a
   assert.ok(mergedProfile);
   assert.match(mergedProfile.configToml, /model = "gpt-5\.4"/);
   assert.match(mergedProfile.configToml, /model_reasoning_effort = "high"/);
+
+  await fs.rm(tempRoot, { recursive: true, force: true });
+});
+
+test("loadPoolConfig keeps provider root keys before common config tables", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codex-proxy-cc-switch-"));
+  const configDir = path.join(tempRoot, "config");
+  const dbPath = path.join(tempRoot, "cc-switch.db");
+  await fs.mkdir(configDir, { recursive: true });
+  createCcSwitchDb(dbPath, {
+    commonConfigCodex: `
+model_reasoning_effort = "xhigh"
+
+[notice.model_migrations]
+"gpt-5.3-codex" = "gpt-5.4"
+
+[features]
+multi_agent = true
+`,
+  });
+
+  await fs.writeFile(
+    path.join(configDir, "pool.local.json"),
+    JSON.stringify(
+      {
+        version: 1,
+        runtimeRoot: "../.codex-pool",
+        profileSource: {
+          type: "cc-switch",
+          dbPath: "../cc-switch.db",
+          appType: "codex",
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const { config } = await loadPoolConfig(path.join(configDir, "pool.local.json"));
+  const mergedProfile = config.profiles.find(
+    (profile) => profile.auth?.tokens?.account_id === "11111111-1111-1111-1111-111111111111",
+  );
+
+  assert.ok(mergedProfile);
+  assert.match(
+    mergedProfile.configToml,
+    /model_reasoning_effort = "xhigh"\n\nmodel = "gpt-5\.4"\n\n\[notice\.model_migrations\]/,
+  );
 
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
