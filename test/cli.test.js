@@ -430,7 +430,9 @@ test("prepareCodexHome writes auth, config, env, and syncs shared entries", asyn
 
   assert.match(result.runtimeHome, /\.codex-pool\/team-a$/);
   assert.deepEqual(JSON.parse(authPayload), { auth_mode: "chatgpt" });
-  assert.equal(configPayload, 'model = "gpt-5-codex"\n');
+  // Top-level `model` lines are stripped to avoid Codex's TOML serializer
+  // misplacing them into [features], which causes parse errors.
+  assert.equal(configPayload.trim(), "");
   assert.equal(syncedAgents, "shared agents\n");
   assert.equal(syncedSkill, "shared skill\n");
   assert.equal(result.env.CODEX_HOME, result.runtimeHome);

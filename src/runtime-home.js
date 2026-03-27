@@ -15,6 +15,48 @@ const DEFAULT_SHARED_HOME_ENTRIES = [
 ];
 const CLAUDE_PROVIDER_ENV_PREFIXES = ["ANTHROPIC_"];
 
+/**
+ * Sanitize a Codex config.toml payload before writing to a runtime home.
+ *
+ * 1. Removes top-level `model = "..."` lines — Codex's TOML serializer
+ *    misplaces them after a [features] section on next run, causing
+ *    "expected a boolean in `features`" parse errors.  The effective
+ *    model is decided by provider env / selection logic, not the config.
+ * 2. Deduplicates top-level scalar keys (keep last occurrence) — Codex
+ *    appends new values on run without removing old ones (e.g. changing
+ *    model_reasoning_effort produces two lines).
+ */
+function sanitizeConfigToml(toml) {
+  const lines = toml.split("\n");
+  const seen = new Map(); // key -> last line index
+  const removable = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Only consider non-empty, non-comment lines that look like top-level scalars
+    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*.+$/);
+    if (!match) continue;
+    const key = match[1];
+
+    if (key === "model") {
+      removable.add(i);
+      continue;
+    }
+
+    if (seen.has(key)) {
+      removable.add(seen.get(key)); // remove the earlier occurrence
+    }
+    seen.set(key, i);
+  }
+
+  const result = lines.filter((_, i) => !removable.has(i));
+  // Collapse consecutive blank lines into at most one
+  let out = result.join("\n").replace(/\n{3,}/g, "\n\n");
+  // Ensure trailing newline
+  if (!out.endsWith("\n")) out += "\n";
+  return out;
+}
+
 function sanitizeProfileName(profileName) {
   return profileName.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
@@ -319,9 +361,10 @@ export async function prepareCodexHome({
     }
 
     if (configTomlPayload !== null) {
+      let sanitizedToml = sanitizeConfigToml(configTomlPayload);
       await writeSecureFile(
         configTomlPath,
-        configTomlPayload.endsWith("\n") ? configTomlPayload : `${configTomlPayload}\n`,
+        sanitizedToml.endsWith("\n") ? sanitizedToml : `${sanitizedToml}\n`,
       );
     } else {
       await removeIfExists(configTomlPath);
