@@ -3,197 +3,72 @@
 `CC Launcher` 把 `cc-switch` 的多账号变成一个可轮换、可一键启动的 `Codex` / `Claude` 产品入口。
 
 它主要解决两个实际问题：
-
 - 单个账号额度不够用，容易很快打满
 - 在 `cc-switch` 里频繁手动切账号，使用成本高
 
-安装之后，你不需要每次先去 `cc-switch` 手切当前账号，再回到命令行重新启动工具。`CC Launcher` 会直接从 `cc-switch` 读取可用 provider，并以轮换池的方式帮你启动：
-
-- `ccodex`
-- `cclaude`
-
-## 它解决了什么问题
-
-如果你平时有多个 Codex / Claude 账号，常见问题通常是：
-
-- 一个账号很快就用完了
-- 账号之间需要来回切换
-- 当前到底切到了哪个账号，不够直观
-- 本地项目里容易残留测试配置，影响正常使用
-
-`CC Launcher` 的目标就是把这些动作收成一个稳定的产品入口：
-
-- 默认直接读取 `~/.cc-switch/cc-switch.db`
-- 默认零配置可用
-- 默认不扫描当前目录里的本地测试配置
-- 用统一命令完成查看、选择和启动
-
 ## 核心功能
 
-- 自动发现 `~/.cc-switch/cc-switch.db`
-- 自动导入 Codex / Claude provider
-- 把多个账号作为轮换池使用，而不是手动来回切换
-- `ccodex` 默认随机选路，优先保证启动速度
-- `ccodex` 支持查看官方额度使用情况
-- `cclaude` 运行时隔离全局 Claude settings
-- 支持通过 GitHub Release 直接安装最新包
+- **自动选路**：默认按 5h 剩余额度自动选择最优账号
+- **额度缓存**：后台定时刷新所有账号额度，无需每次 live probe
+- **智能负载**：跳过额度耗尽或认证失败的账号，30 分钟后自动恢复
+- **零配置**：直接读取 `~/.cc-switch/cc-switch.db`，无需额外配置
 
 ## 安装
-
-直接安装最新发布包：
 
 ```bash
 npm install -g https://github.com/steven-ld/cc-launcher/releases/latest/download/cc-launcher.tgz
 ```
 
-安装完成后建议先检查环境：
-
-```bash
-ccodex doctor
-cclaude doctor
-```
-
-## 使用前提
-
-默认数据库路径是：
-
-```text
-~/.cc-switch/cc-switch.db
-```
-
-首次使用前请确认：
-
-1. 已安装 `cc-switch`
-2. 已通过 `cc-switch` 登录
-3. 已成功生成本地数据库
-
-如果数据库不存在，`doctor` 和 `init` 会给出明确提示。
-
 ## 快速开始
 
-### Codex
-
 ```bash
-ccodex doctor
-ccodex list
-ccodex pick
-ccodex proxy
-ccodex run -- --help
-ccodex usage --json
+ccodex doctor   # 检查环境
+ccodex list     # 查看所有账号
+ccodex status   # 查看账号启用/禁用状态
+ccodex cache    # 查看额度缓存
+ccodex          # 默认启动，自动选路
 ```
 
-### Claude
+## Codex 命令
 
-```bash
-cclaude doctor
-cclaude list
-cclaude pick
-cclaude proxy
-cclaude run -- --help
-```
+| 命令 | 说明 |
+|------|------|
+| `ccodex doctor` | 检查环境 |
+| `ccodex list` | 查看所有账号 |
+| `ccodex status` | 查看账号启用/禁用状态 |
+| `ccodex cache` | 查看额度缓存 |
+| `ccodex pick` | 查看当前选中账号 |
+| `ccodex proxy` | 启动 WebSocket 代理 |
+| `ccodex run` | 启动 Codex |
+| `ccodex usage` | 查看官方额度 |
+| `ccodex disable --pool-profile xxx` | 禁用某账号 |
+| `ccodex enable --pool-profile xxx` | 启用某账号 |
 
-## 常用命令
+## Claude 命令
 
-- `doctor`：检查命令、数据库和账号池是否可用
-- `list`：查看当前导入了哪些账号
-- `pick`：查看当前会选中哪个账号
-- `proxy`：启动一个稳定的本地代理地址，供外部客户端直接连接
-- `run`：按当前选中的账号启动目标 CLI
-- `usage`：查看 Codex 官方额度，只支持 `ccodex`
+| 命令 | 说明 |
+|------|------|
+| `cclaude doctor` | 检查环境 |
+| `cclaude list` | 查看所有账号 |
+| `cclaude status` | 查看账号启用/禁用状态 |
+| `cclaude proxy` | 启动 HTTP 代理 |
+| `cclaude run` | 启动 Claude |
+| `cclaude disable --pool-profile xxx` | 禁用某账号 |
+| `cclaude enable --pool-profile xxx` | 启用某账号 |
 
-补充说明：
+## 代理地址
 
-- `ccodex usage --json` 默认会自动选择一个可用的官方 Codex 账号
-- 如果你想固定某个账号，再额外传 `--pool-profile`
-- `cclaude` 不支持 `usage`
-
-## Proxy Mode
-
-如果你不想每次切换 provider 后都重新进入一轮手动启动，可以直接启动一个本地代理地址。
-
-### Claude
-
-`cclaude proxy` 会启动一个常驻 HTTP 代理。默认地址：
-
-```text
-http://127.0.0.1:15722
-```
-
-它会按当前账号池动态选择一个 Claude provider，并把请求转发到该 provider 在 `cc-switch` 里配置的上游接口。
-
-常用检查接口：
-
-```text
-GET /__cc-launcher/health
-GET /__cc-launcher/providers
-```
-
-### Codex
-
-`ccodex proxy` 会启动一个由 `cc-launcher` 托管的本地 WebSocket 代理。默认地址：
-
-```text
-ws://127.0.0.1:15721
-```
-
-补充说明：
-
-- 你当前 `cc-switch` 里的 Codex provider 是官方登录态，不是独立 `base_url` 型 provider
-- 因此 `ccodex proxy` 会为每个 WebSocket 连接启动一个官方 `codex app-server --listen stdio://` 子代理
-- `cc-launcher` 自己负责监听固定地址，并把 WebSocket 消息桥接到对应子代理
-- 如果不显式指定 profile，会按现有选择策略为每个连接动态选一个可用 profile
-
-如果你要固定某个账号，可以直接在启动时传：
-
-```bash
-ccodex proxy --pool-profile codex-xxxx-yyyy
-```
-
-也可以在连接时用查询参数指定：
-
-```text
-ws://127.0.0.1:15721/?profile=codex-xxxx-yyyy
-```
-
-如果你要改监听地址，可以显式传：
-
-```bash
-cclaude proxy --pool-proxy-host 127.0.0.1 --pool-proxy-port 18080
-ccodex proxy --pool-proxy-host 127.0.0.1 --pool-proxy-port 18081
-```
+- **Claude**: `http://127.0.0.1:15722`
+- **Codex**: `ws://127.0.0.1:15721`
 
 ## 故障排查
 
-### 没找到 `~/.cc-switch/cc-switch.db`
+### Windows 上报 "spawn xxx ENOENT"
+确保 Node.js 版本 >= 18.0.0（已支持 Windows）
 
-先检查：
+### 账号一直用同一个
+可能是其他账号额度耗尽或认证失败，用 `ccodex status` 查看
 
-1. `cc-switch` 是否已安装
-2. 是否已经完成登录
-3. 默认数据库路径下是否存在数据文件
+## 开发
 
-如果数据库在自定义位置，可以显式指定：
-
-```bash
-ccodex doctor --pool-source-db /absolute/path/to/cc-switch.db
-```
-
-### 为什么项目目录里的本地配置没有生效
-
-这是当前设计。默认不会自动扫描工作目录里的 `pool.local.json`。
-
-如果你确实要使用某份本地配置，请显式传入：
-
-```bash
-ccodex run --pool-config /absolute/path/to/config.json -- --help
-```
-
-### 为什么 `cclaude` 看起来总落到同一个 provider
-
-`cclaude` 运行时已经默认隔离用户级 settings。如果结果仍然不对，优先检查 `cc-switch` 中该 provider 本身写入的模型或网关环境变量。
-
-## 开发与发布
-
-开发、配置、测试和发布说明已移到：
-
-- [DEVELOPMENT.md](./DEVELOPMENT.md)
+详见 [DEVELOPMENT.md](./DEVELOPMENT.md)

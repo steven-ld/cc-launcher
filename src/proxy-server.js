@@ -555,28 +555,61 @@ export async function runProxyCommand({
     ...(parsed.proxyPort ? { port: parsed.proxyPort } : {}),
   };
 
-  // Start background rate limit cache refresh for Codex
+  // Start background rate limit cache refresh
+  // Note: CC Cloud probe is NOT started here to avoid probing non-standard providers
+  // on every proxy startup. Cache is refreshed only via explicit `ccodex cache` / `cclaude cache` commands.
   let cacheRefreshStopped = false;
+  const cacheRefreshOptions = {
+    codexCommand: launchCommand,
+    appType: cliContext.appType,
+  };
+  // Only start background refresh for Codex (quota-based probing is safe and fast).
+  // For Claude/CC Cloud: probe only when explicitly requested.
+  let proxyCacheRefresh = null;
   if (cliContext.appType === "codex") {
-    startRateLimitCacheRefresh(config.profiles, { codexCommand: launchCommand });
+    proxyCacheRefresh = startRateLimitCacheRefresh(config.profiles, cacheRefreshOptions);
     process.stderr.write(`[cc-launcher] rate limit cache started (refreshes every 5 minutes)\n`);
   }
 
-  // Helper to stop cache refresh on shutdown
+  // Helper to stop cache refresh on shutdown (safe when not running)
   const stopCacheRefresh = () => {
-    if (!cacheRefreshStopped) {
+    if (!cacheRefreshStopped && proxyCacheRefresh) {
       cacheRefreshStopped = true;
       stopRateLimitCacheRefresh();
     }
   };
 
+  // Helper to restart cache refresh (used by SIGHUP reload — Codex only)
+  const restartCacheRefresh = async () => {
+    if (cliContext.appType !== "codex") return;
+    stopCacheRefresh();
+    const stateManager = getProfileStateManager();
+    await stateManager.load();
+    const enabledProfiles = stateManager.filterEnabled(config.profiles);
+    if (enabledProfiles.length > 0) {
+      proxyCacheRefresh = startRateLimitCacheRefresh(enabledProfiles, cacheRefreshOptions);
+      process.stderr.write(`[cc-launcher] rate limit cache restarted (${enabledProfiles.length} profiles)\n`);
+    }
+  };
+
   // Install signal handlers for cleanup
-  const cleanupSignals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const cleanupSignals = ["SIGINT", "SIGTERM"];
   const signalHandlers = {};
   for (const sig of cleanupSignals) {
     signalHandlers[sig] = () => stopCacheRefresh();
     process.on(sig, signalHandlers[sig]);
   }
+
+  // SIGHUP: reload profile state and restart cache refresh (config file changes)
+  const sighupHandler = async () => {
+    process.stderr.write("[cc-launcher] SIGHUP — reloading profile state and restarting cache...\n");
+    await restartCacheRefresh();
+  };
+  process.on("SIGHUP", sighupHandler);
+  signalHandlers["SIGHUP"] = () => {
+    stopCacheRefresh();
+    process.removeListener("SIGHUP", sighupHandler);
+  };
 
   let result;
   try {
@@ -602,6 +635,9 @@ export async function runProxyCommand({
     stopCacheRefresh();
     for (const sig of cleanupSignals) {
       process.removeListener(sig, signalHandlers[sig]);
+    }
+    if (signalHandlers["SIGHUP"]) {
+      process.removeListener("SIGHUP", signalHandlers["SIGHUP"]);
     }
   }
 

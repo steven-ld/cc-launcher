@@ -253,6 +253,29 @@ function printProfile(profile, runtimeHome, cliContext) {
   }
 }
 
+// ─── SIGHUP config reload ────────────────────────────────────────────────────
+let reloadListeners = [];
+
+export function onSighupReload(fn) {
+  reloadListeners.push(fn);
+}
+
+function installSighupReload() {
+  process.on("SIGHUP", async () => {
+    process.stderr.write("[cc-launcher] SIGHUP received - reloading config...\n");
+    const stateManager = getProfileStateManager();
+    await stateManager.load();
+    for (const fn of reloadListeners) {
+      try {
+        await fn();
+      } catch (error) {
+        process.stderr.write(`[cc-launcher] reload handler error: ${error.message}\n`);
+      }
+    }
+    process.stderr.write("[cc-launcher] config reload complete.\n");
+  });
+}
+
 function listProfiles(config) {
   for (const profile of config.profiles) {
     const weight = profile.weight ?? 1;
@@ -437,11 +460,14 @@ function printLaunchSelectionDiagnostics(diagnostics) {
 
 export async function main(argv = process.argv.slice(2), cliContext = detectCliContext(process.argv[1])) {
   const parsed = parseCliArgs(argv);
-  
+
   // Initialize profile state manager early
   const stateManager = getProfileStateManager();
   await stateManager.load();
-  
+
+  // Install SIGHUP config reload (idempotent — safe to call multiple times)
+  installSighupReload();
+
   if (parsed.help) {
     printHelp(cliContext);
     return 0;
@@ -508,9 +534,9 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
   if (parsed.command === "status") {
     const stateManager = getProfileStateManager();
     await stateManager.load();
-    
+
     const disabled = stateManager.getDisabledProfiles();
-    
+
     if (parsed.outputJson) {
       process.stdout.write(JSON.stringify({
         total: config.profiles.length,
@@ -523,7 +549,7 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
       process.stdout.write(`Total profiles: ${config.profiles.length}\n`);
       process.stdout.write(`Enabled: ${config.profiles.filter((p) => !stateManager.isDisabled(p.name)).length}\n`);
       process.stdout.write(`Disabled: ${disabled.length}\n`);
-      
+
       if (disabled.length > 0) {
         process.stdout.write("\nDisabled profiles:\n");
         process.stdout.write("------------------\n");
@@ -541,14 +567,14 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
   if (parsed.command === "enable") {
     const stateManager = getProfileStateManager();
     await stateManager.load();
-    
+
     if (!parsed.profileName) {
       throw new Error("--pool-profile is required for enable command");
     }
-    
+
     const wasDisabled = stateManager.isDisabled(parsed.profileName);
     stateManager.enable(parsed.profileName);
-    
+
     if (wasDisabled) {
       process.stdout.write(`Enabled profile: ${parsed.profileName}\n`);
     } else {
@@ -560,14 +586,14 @@ export async function main(argv = process.argv.slice(2), cliContext = detectCliC
   if (parsed.command === "disable") {
     const stateManager = getProfileStateManager();
     await stateManager.load();
-    
+
     if (!parsed.profileName) {
       throw new Error("--pool-profile is required for disable command");
     }
-    
+
     const wasEnabled = !stateManager.isDisabled(parsed.profileName);
     stateManager.disable(parsed.profileName, "manual");
-    
+
     if (wasEnabled) {
       process.stdout.write(`Disabled profile: ${parsed.profileName}\n`);
       process.stdout.write(`Will retry in 30 minutes.\n`);
