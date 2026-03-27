@@ -1,0 +1,17 @@
+# Code Owners
+
+This file defines who owns which parts of the codebase.
+
+## Default (all files)
+@steven-ld
+
+## Specific paths
+src/cli.js               @steven-ld
+src/pool-config.js      @steven-ld
+src/profile-selection.js @steven-ld
+src/profile-state.js     @steven-ld
+src/rate-limit-cache.js  @steven-ld
+src/proxy-server.js      @steven-ld
+src/app-context.js       @steven-ld
+src/runtime-home.js      @steven-ld
+.github/                 @steven-ld
